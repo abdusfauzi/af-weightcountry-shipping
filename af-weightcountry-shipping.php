@@ -3,7 +3,7 @@
  * Plugin Name: AF Weight/Country Shipping
  * Plugin URI: http://www.af-plugins.com/af-plugins/af-weightcountry-shipping
  * Description: WooCommerce extension for Weight/Country shipping. Original plugin from https://wordpress.org/plugins/oik-weightcountry-shipping/
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Abdus Fauzi
  * Author URI: http://abdusfauzi.com
  * License: GPL2
