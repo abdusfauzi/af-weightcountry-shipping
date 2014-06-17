@@ -1,9 +1,8 @@
 <?php
 /**
  * Plugin Name: AF Weight/Country Shipping
- * Plugin URI: http://www.af-plugins.com/af-plugins/af-weightcountry-shipping
  * Description: WooCommerce extension for Weight/Country shipping. Original plugin from https://wordpress.org/plugins/oik-weightcountry-shipping/
- * Version: 1.0.5
+ * Version: 1.1.0
  * Author: Abdus Fauzi
  * Author URI: http://abdusfauzi.com
  * License: GPL2
@@ -28,6 +27,9 @@ function init_af_shipping() {
 	if ( ! class_exists( 'WC_Shipping_Method' ) ) return;
 
 	class af_Shipping extends WC_Shipping_Method {
+	
+		private $shipping_options = array();
+		private $available_rate = array();
 
 		function __construct() {
 			$this->id           = 'af_shipping'; // Retain the original code rather than use  'af_shipping';
@@ -82,6 +84,7 @@ function init_af_shipping() {
 					'description' => __( 'This controls the title which the user sees during checkout.', 'woocommerce' ),
 					'default'     => __( 'Regular Shipping', 'woocommerce' ),
 				),
+				/*
 				'tax_status'  => array(
 					'title'       => __( 'Tax Status', 'woocommerce' ),
 					'type'        => 'select',
@@ -92,6 +95,7 @@ function init_af_shipping() {
 						'none'    => __( 'None', 'woocommerce' ),
 					),
 				),
+				*/
 				'fee'         => array(
 					'title'       => __( 'Handling Fee', 'woocommerce' ),
 					'type'        => 'text',
@@ -101,7 +105,7 @@ function init_af_shipping() {
 				'options'     => array(
 					'title'       => __( 'Shipping Rates', 'woocommerce' ),
 					'type'        => 'textarea',
-					'description' => __( 'Set your weight based rates in ' . get_option( 'woocommerce_weight_unit' ) . ' for country groups (one per line). Example: <code>Max weight|Cost|country group number</code>. Example: <code>10|6.95|3</code>. For decimal, use a dot not a comma.', 'woocommerce' ),
+					'description' => __( 'Set your weight based rates in ' . get_option( 'woocommerce_weight_unit' ) . ' for country groups (one per line). Example: <code>Max weight|Cost|state-group,country-group|Method Name</code>. Example: <code>10|6.95|S1,C1</code>. For decimal, use a dot not a comma.', 'woocommerce' ),
 					'default'     => '',
 				),
                 'state_group_no' => array(
@@ -115,18 +119,7 @@ function init_af_shipping() {
 					'type' 	   => 'text',
 					'description' => __( 'Number of groups of countries sharing delivery rates (hit "Save changes" button after you have changed this setting).' ),
 					'default' 	=> '3',
-				),
-
-                // Didn't re-add sync-countries option since this has updated in WooCommerce 2.1 Herb 2014/03/27
-                // @TODO Need to use network_admin_url( "/wp-admin/admin.php?page=woocommerce_settings&tab=general"
-                // 'sync_countries' => array(
-                //    'title' 		=> __( 'Add countries to allowed', 'woocommerce' ),
-                //    'type' 			=> 'checkbox',
-                //    'label' 		=> __( 'Countries added to country groups will be automatically added to the Allowed Countries in the General settings tab.
-                //                      This makes sure countries defined in country groups are visible on checkout.
-                //                      Note: Deleting a country from the country group will not delete the country from Allowed Countries.', 'woocommerce' ),
-                //    'default' 		=> 'no',
-                // ),
+				)
 			);
 		}
 
@@ -180,52 +173,22 @@ function init_af_shipping() {
             }
         }
 
-    	function calculate_shipping( $package = array() ) {
-    		global $woocommerce;
-
-            $group      = $this->get_countrygroup($package);
-            $rates      = $this->get_rates_by_countrygroup( $group );
-            $weight     = $woocommerce->cart->cart_contents_weight;
-            $final_rate = $this->pick_smallest_rate($rates, $weight);
-
-            if ($group[0] == 'S') {
-                $destination = $package['destination']['state'];
-            } else {
-                $destination = $package['destination']['country'];
-            }
-
-            if($final_rate === false) return false;
-
-            $taxable    = ($this->tax_status == 'taxable') ? true : false;
-
-            if($this->fee > 0 && $destination) $final_rate = $final_rate + $this->fee;
-
-                $rate = array(
-                'id'        => $this->id,
-                'label'     => $this->title,
-                'cost'      => $final_rate,
-                'taxes'     => '',
-                'calc_tax'  => 'per_order'
-                );
-
-            $this->add_rate( $rate );
-        }
-
 
         /*
         * Retrieves the number of state/country group for state selected by user on checkout
         */
         function get_countrygroup($package = array()) {
             $country_group = null;
+            $state_group = null;
             $counter = 1;
 
             while(is_array($this->settings['S'.$counter])) {
-                if (in_array($package['destination']['state'], $this->settings['S'.$counter])) $country_group = 'S'.$counter;
+                if (in_array($package['destination']['state'], $this->settings['S'.$counter])) $state_group = 'S'.$counter;
 
                 $counter++;
             }
 
-            if (isset($country_group)) return $country_group;
+            if (isset($state_group)) return $state_group;
 
             $counter = 1;
 
@@ -244,62 +207,129 @@ function init_af_shipping() {
         */
         function get_rates_by_countrygroup($country_group = null) {
             $countrygroup_rate = null;
-
-            $rates = array();
+            
             if ( sizeof( $this->options ) > 0) foreach ( $this->options as $option => $value ) {
 
                 $rate = preg_split( '~\s*\|\s*~', trim( $value ) );
 
-                if ( sizeof( $rate ) !== 3 )  {
+                if ( sizeof( $rate ) !== 4 )  {
                     continue;
                 } else {
-                    $rates[] = $rate;
-
+                    $this->shipping_options[] = $rate;
                 }
             }
 
-            foreach($rates as $key) {
-                $groups = explode(",", $key[2]);
-                foreach($groups as $group_key)
-                {
-                    if ($group_key == $country_group) {
-                        $countrygroup_rate[] = $key;
-                    }
-                }
+            foreach($this->shipping_options as $key) {
+            	$compare = strpos($key[2], $country_group);
+
+            	if ( $compare !== false ) {
+	            	$countrygroup_rate[] = $key; 
+            	}
             }
+            
             return $countrygroup_rate;
+            
         }
+
 
         /*
         * Picks the right rate from available rates based on cart weight
         */
-        function pick_smallest_rate($rates,$weight) {
-
-            if ($weight == 0) return 0; // no shipping for cart without weight
-
-            if ( sizeof($rates) > 0 ) {
-                foreach($rates as $key => $value) {
-                    if($weight <= $value[0]) {
-                        $postage[] = $value[1];
-                    }
-                    $postage_all_rates[] = $value[1];
-                }
+        function pick_smallest_rate($rates, $weight) {
+			$min_weight = array();
+			$temp = null;
+			$max = false;
+			
+            //if ($weight == 0) return 0; // no shipping for cart without weight
+            
+            foreach ( $rates as $rate ) {
+	            if ( $weight <= $rate[0] ) {
+		            $this->available_rate[] = $rate;
+		            $min_weight[] = $rate[0]; 
+	            } else {
+		            $this->available_rate[] = $rate;
+		            $min_weight[] = $rate[0];
+		            $max = true;
+	            }
             }
-
-            if ( sizeof( $postage ) > 0) {
-                return min ($postage );
-            } else {
-                if (sizeof( $postage_all_rates) > 0 ) return max( $postage_all_rates );
+            
+            
+            
+            $temp = $this->available_rate;
+            $this->available_rate = null;
+            
+            foreach ( $temp as $ship ) {
+            	if ( !$max ) {
+		            if ( $ship[0] == min($min_weight) ) {
+			            $this->available_rate[] = $ship;
+		            }
+	            } else {
+		            if ( $ship[0] == max($min_weight) ) {
+			            $this->available_rate[] = $ship;
+		            }
+	            }
             }
-
+            
+            //print_r($this->available_rate);
+            //die;
+            
+            if ( count( $this->available_rate ) > 0 ) {
+            	return $this->available_rate;
+            }
+            
             return false;
+
         }
 
-        function etz($etz) {
 
-            if(empty($etz) || !is_numeric($etz)) {
-                return 0.00;
+        /**
+         *   Calculate and set Shipping Options
+         */
+    	function calculate_shipping( $package = array() ) {
+    		global $woocommerce;
+    		
+    		//echo '<pre>';
+    		
+            $group      = $this->get_countrygroup( $package );
+            $rates      = $this->get_rates_by_countrygroup( $group );
+            $weight     = $woocommerce->cart->cart_contents_weight;
+            $final_rate = $this->pick_smallest_rate( $rates, $weight );
+
+            if ($group[0] == 'S') {
+                $destination = $package['destination']['state'];
+            } else {
+                $destination = $package['destination']['country'];
             }
+
+            if($final_rate === false) return false;
+
+            //$taxable = ($this->tax_status == 'taxable') ? true : false;
+                        
+            print_r($rate);
+			
+			foreach ( $final_rate as $shipping ) {
+				$cost = $shipping[1];
+				
+				if ( $shipping[0] > 0 ) {
+					if ( ceil($weight/$shipping[0])>0 ){
+						$cost = $shipping[1] * ceil($weight/$shipping[0]);
+					}
+				}
+				
+				if( $this->fee > 0 ) {
+	            	$cost = $cost + $this->fee;
+	            }
+	            
+	            $rate = array(
+		                'id'        => $this->id . ':' . $shipping[1]. ':' . $shipping[2]. ':' . $shipping[3],
+		                'label'     => $shipping[3],
+		                'cost'      => $cost,
+		                'calc_tax'  => 'per_order'
+					);
+	            
+	            $this->add_rate( $rate );
+			}
+
         }
 
         /**
